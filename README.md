@@ -18,11 +18,6 @@ Periodically discharges the system via a GPIO-controlled output pin.
 
 Monitors baseline voltage drift to detect charge accumulation.
 
-Automatically recalibrates if drift exceeds threshold (
->
-0.1
-𝑉
->0.1V).
 
 Mathematical Kernels
 
