@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#line 1 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 // Advanced Curvature Analysis Oscilloscope for Adafruit Feather RP2040
 // Specialized for signal pattern analysis with periodic static discharge
 // Implements locally convex topological vector space analysis + charge management
@@ -12,7 +11,7 @@ int count = 0;
 // --- END RP2040 CHANGES ---
 
 #define SAMPLE_RATE_MS 50   // 50Hz sampling
-#define HISTORY_SIZE 20      // Circular buffer for signal history
+#define HISTORY_SIZE 12     // Circular buffer for signal history
 #define SMOOTHING_WINDOW 7
 #define STATE_SPACE 999999
 #define FRECHET_THRESHOLD 0.0007 // Convergence threshold for Cauchy sequences
@@ -53,63 +52,35 @@ float frechetMetric = 0.0;
 bool isLocallyConvex = false;
 bool chargeDetected = false;
 
-#line 54 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void setup();
-#line 83 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void loop();
-#line 116 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void establishBaseline();
-#line 140 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void performPeriodicDischarge();
-#line 150 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void performDischargeSequence();
-#line 172 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void detectChargeAccumulation();
-#line 184 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void initializeMatrices();
-#line 206 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void handleSerialCommands();
-#line 234 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void displayChargeStatus();
-#line 252 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void sampleAllChannels();
-#line 266 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void applySmoothingFilter();
-#line 281 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void updateCurrentMatrix();
-#line 294 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 float calculateCorrelation(int ch1, int ch2);
-#line 311 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void performCurvatureMatrixAnalysis();
-#line 334 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void calculateFrechetMetrics();
-#line 355 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void updateCauchySequence();
-#line 370 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void detectSignFlips();
-#line 396 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void performAdvancedMatrixAnalysis();
-#line 413 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void displayMatrixOscilloscope();
-#line 417 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void displayEnhancedMatrixStats();
-#line 448 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void displayCurrentMatrix();
-#line 461 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void displayCurvatureMatrix();
-#line 474 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void displayFrechetAnalysis();
-#line 496 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 float getCurrentValue(int channel);
-#line 501 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 float getPeakValue(int channel);
-#line 510 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 float getRMSValue(int channel);
-#line 518 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 float getAverageCurvature();
-#line 526 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
 void resetAnalysis();
-#line 54 "C:\\Users\\George\\Downloads\\Duino-Coin_4.3_windows\\Arduino_Code\\Arduino_Code.ino"
+
 void setup() {
   Serial.begin(115200);
 
@@ -117,11 +88,6 @@ void setup() {
   pinMode(DISCHARGE_PIN, OUTPUT);
   digitalWrite(DISCHARGE_PIN, LOW);
 
-  // --- RP2040 SPECIFIC CHANGE ---
-  // Set ADC resolution to 12-bit for RP2040
-  analogReadResolution(12);
-  // The 'analogSetPinAttenuation' function is not needed for RP2040
-  // --- END RP2040 CHANGE ---
 
   // Initialize all data structures
   initializeMatrices();
