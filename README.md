@@ -1,4 +1,4 @@
-This Arduino program is a signal-to-math oracle, turning real analog phenomena into rule-based deterministic outcomes. For gambling, it provides a non-interactive, non-random verification oracle rather than chance-driven randomness.
+This RP2040 program is a signal-to-math oracle, turning real analog phenomena into rule-based deterministic outcomes. For gambling, it provides a non-interactive, non-random verification oracle rather than chance-driven randomness.
 
 1. General Overview
 
