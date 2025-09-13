@@ -11,7 +11,7 @@ int count = 0;
 // --- END RP2040 CHANGES ---
 
 #define SAMPLE_RATE_MS 50   // 50Hz sampling
-#define HISTORY_SIZE 12     // Circular buffer for signal history
+#define HISTORY_SIZE 20     // Circular buffer for signal history
 #define SMOOTHING_WINDOW 7
 #define STATE_SPACE 999999
 #define FRECHET_THRESHOLD 0.0007 // Convergence threshold for Cauchy sequences
