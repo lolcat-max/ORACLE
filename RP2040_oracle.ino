@@ -14,7 +14,7 @@ int count = 0;
 #define HISTORY_SIZE 20    // Circular buffer for signal history
 #define SMOOTHING_WINDOW 7
 #define STATE_SPACE 999999
-#define FRECHET_THRESHOLD 0.0007 // Convergence threshold for Cauchy sequences
+#define FRECHET_THRESHOLD 0.0003 // Convergence threshold for Cauchy sequences
 
 // Charge discharge settings
 #define DISCHARGE_INTERVAL_MS 500000 // Discharge every 5 seconds
@@ -445,8 +445,6 @@ void displayEnhancedMatrixStats() {
   float rmsVal = getRMSValue(selectedChannel);
   float curvatureAvg = getAverageCurvature();
 
-  if (isLocallyConvex && curvatureAvg > 0.06){
-
   Serial.print("CH");
   Serial.print(selectedChannel);
   Serial.print(": ");
@@ -465,9 +463,7 @@ void displayEnhancedMatrixStats() {
   Serial.print(chargeAccumulation[selectedChannel], 3);
   Serial.print(" │ CONVEX: ");
   Serial.println(isLocallyConvex ? "YES" : "NO");
- 
-  }
- 
+
 }
 
 void displayCurrentMatrix() {
