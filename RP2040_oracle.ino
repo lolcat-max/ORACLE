@@ -120,7 +120,7 @@ void loop() {
     calculateFrechetMetrics();
     detectSignFlips();
     displayMatrixOscilloscope();
-    
+    performAdvancedMatrixAnalysis();
     historyIndex = (historyIndex + 1) % HISTORY_SIZE;
     analysisCount++;
     lastSample = currentTime;
@@ -368,9 +368,7 @@ void detectSignFlips() {
       flipCount++;
     }
   }
-  if (analysisCount * analysisCount < STATE_SPACE) {
-    performAdvancedMatrixAnalysis();
-  }
+
 }
 
 void performAdvancedMatrixAnalysis() {
