@@ -215,11 +215,11 @@ void initializeMatrices() {
     chargeAccumulation[ch] = 0.0;
   }
   for (int i = 0; i < MATRIX_SIZE; i++) {
-    seminormVector[i] = 0.0;
-    cauchySequence[i] = 0.0;
+    seminormVector[i] = 1.0;
+    cauchySequence[i] = 1.0;
     for (int j = 0; j < MATRIX_SIZE; j++) {
-      currentMatrix[i][j] = 0.0;
-      curvatureMatrix[i][j] = 0.0;
+      currentMatrix[i][j] = 1.0;
+      curvatureMatrix[i][j] = 1.0;
       metricMatrix[i][j] = (i == j) ? 1.0 : 0.0;
     }
   }
