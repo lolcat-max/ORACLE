@@ -55,8 +55,6 @@ bool chargeDetected = false;
 void setup();
 void loop();
 void establishBaseline();
-void performPeriodicDischarge();
-void performDischargeSequence();
 void detectChargeAccumulation();
 void initializeMatrices();
 void handleSerialCommands();
@@ -110,11 +108,7 @@ void loop() {
 
   handleSerialCommands();
 
-  // Check for periodic discharge
-  if (currentTime - lastDischarge >= DISCHARGE_INTERVAL_MS) {
-    performPeriodicDischarge();
-    lastDischarge = currentTime;
-  }
+ 
 
   if (currentTime - lastSample >= SAMPLE_RATE_MS) {
     // Core sampling and analysis pipeline
@@ -133,14 +127,9 @@ void loop() {
   }
 }
 
-// NOTE: The rest of the functions (establishBaseline, performPeriodicDischarge, etc.)
-// do not require changes as they use standard Arduino API calls or logic that
-// is platform-independent. The only exception is 'sampleAllChannels' where the
-// ADC scaling remains 4095 due to the 12-bit resolution.
 
 void establishBaseline() {
   Serial.println("■ ESTABLISHING BASELINE VOLTAGES...");
-  performDischargeSequence();
   delay(100);
   for (int ch = 0; ch < NUM_CHANNELS; ch++) {
     float sum = 0;
@@ -162,37 +151,6 @@ void establishBaseline() {
   }
 }
 
-void performPeriodicDischarge() {
-  Serial.println("■ PERIODIC DISCHARGE CYCLE");
-  performDischargeSequence();
-  if (chargeDetected) {
-    Serial.println("■ CHARGE DRIFT DETECTED - RECALIBRATING");
-    establishBaseline();
-    chargeDetected = false;
-  }
-}
-
-void performDischargeSequence() {
-  pinMode(DISCHARGE_PIN, INPUT);
-  delay(50);
-  pinMode(DISCHARGE_PIN, OUTPUT);
-  digitalWrite(DISCHARGE_PIN, HIGH);
-  delayMicroseconds(100);
-  digitalWrite(DISCHARGE_PIN, LOW);
-  delay(10);
-  for (int pulse = 0; pulse < 5; pulse++) {
-    digitalWrite(DISCHARGE_PIN, HIGH);
-    delayMicroseconds(50);
-    digitalWrite(DISCHARGE_PIN, LOW);
-    delayMicroseconds(500);
-  }
-  for (int ch = 0; ch < NUM_CHANNELS; ch++) {
-    analogRead(analogPins[ch]);
-    delayMicroseconds(100);
-    analogRead(analogPins[ch]);
-  }
-  Serial.println("■ DISCHARGE COMPLETE");
-}
 
 void detectChargeAccumulation() {
   chargeDetected = false;
@@ -244,9 +202,6 @@ void handleSerialCommands() {
       displayFrechetAnalysis();
     } else if (cmd == 'm') {
       displayCurrentMatrix();
-    } else if (cmd == 'd') {
-      performDischargeSequence();
-      Serial.println("■ MANUAL DISCHARGE EXECUTED");
     } else if (cmd == 'b') {
       establishBaseline();
       Serial.println("■ BASELINE RECALIBRATED");
