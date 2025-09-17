@@ -368,7 +368,7 @@ void detectSignFlips() {
       flipCount++;
     }
   }
-  if (analysisCount * analysisCount < STATE_SPACE && flipCount > 1) {
+  if (analysisCount * analysisCount < STATE_SPACE) {
     performAdvancedMatrixAnalysis();
   }
 }
@@ -508,4 +508,3 @@ void resetAnalysis() {
   isLocallyConvex = false;
   chargeDetected = false;
 }
-
