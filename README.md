@@ -85,7 +85,7 @@ Use Case Example:
 
 A gambling protocol could define:
 
-Win if F Metric > 3.14
+Win if F Metric > 4.0
 
 Lose otherwise.
 
