@@ -538,7 +538,7 @@ void displayAnalogOscilloscope() {
     Serial.println("╠════════════════════════════════════════════════════╣");
     Serial.printf("║ Fréchet Metric: %.6f │ Locally Convex: %-5s   ║\n",
                   globalFrechetMetric, frechet.is_locally_convex ? "TRUE" : "FALSE");
-    Serial.printf(" Complete: %-5s │ Metric Distance: %.6f\n",
+    Serial.printf("  Complete: %-5s │ Metric Distance: %.6f\n",
                   frechet.is_complete ? "TRUE" : "FALSE", frechet.metric_distance);
     Serial.println("╚════════════════════════════════════════════════════╝");
 }
