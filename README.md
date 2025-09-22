@@ -81,13 +81,5 @@ Trust: Since there is no pseudo-random generator, outcomes cannot be gamed by bi
 
 Auditability: All metrics (curvature, correlations, Fréchet convergence) are mathematically inspectable and can be reproduced given the same input voltages.
 
-Use Case Example:
-
-A gambling protocol could define:
-
-Win if F Metric > 4.0
-
-Lose otherwise.
-
 This yields deterministic, physics-verified gambling without random numbers.
 
