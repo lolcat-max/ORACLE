@@ -85,7 +85,7 @@ Use Case Example:
 
 A gambling protocol could define:
 
-Win if Fréchet Metric < 0.75 and convexity = TRUE.
+Win if F Metric > 3.14
 
 Lose otherwise.
 
