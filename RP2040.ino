@@ -1,4 +1,3 @@
-
 #include <Arduino.h>
 // Advanced Curvature Analysis Oscilloscope for Adafruit Feather RP2040
 // Specialized for signal pattern analysis with periodic static discharge
@@ -414,9 +413,9 @@ void detectSignFlips() {
       flipCount++;
     }
   }
-
+  if (analysisCount * analysisCount < STATE_SPACE && flipCount > 1) {
     performAdvancedMatrixAnalysis();
-  
+  }
 }
 
 void performAdvancedMatrixAnalysis() {
@@ -459,8 +458,7 @@ void displayEnhancedMatrixStats() {
   Serial.print(" │ FLIPS: ");
   Serial.print(flipCount);
   Serial.print(" │ F-METRIC: ");
-  Serial.print((frechetMetric/curvatureAvg), 4);
-  
+  Serial.print(frechetMetric, 4);
   Serial.print(" │ CHARGE: ");
   Serial.print(chargeAccumulation[selectedChannel], 3);
   Serial.print(" │ CONVEX: ");
