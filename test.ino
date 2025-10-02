@@ -134,8 +134,7 @@ void loop() {
 u8g2.setFont(u8g2_font_ncenB08_tr);
 
 u8g2.setCursor(0, 10);
-u8g2.print("F:");
-u8g2.print(frechetMetric, 6);
+u8g2.print(isLocallyConvex ? "TRUE" : "SCAN");
 
 // Draw graph inside display bounds
 // Clear the graph area (start from y=15 for example)
@@ -354,14 +353,14 @@ void updateCauchySequence() {
     return;
   }
 
-  bool converging = true;
+  bool converging = false;
   for (int i = 1; i < MATRIX_SIZE; i++) {
     if (fabs(cauchySequence[0] - cauchySequence[i]) > FRECHET_THRESHOLD) {
-      converging = false;
+      converging = true;
     }
   }
 
-  isLocallyConvex = converging && (frechetMetric > 0.1);
+  isLocallyConvex = converging && (frechetMetric > 100);
   isMetrizable = calculateFrechetProbability() > 0.5;
 }
 
