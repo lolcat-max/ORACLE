@@ -135,19 +135,7 @@ u8g2.setFont(u8g2_font_ncenB08_tr);
 
 u8g2.setCursor(0, 10);
 u8g2.print("F:");
-u8g2.print(frechetMetric, 4);
-
-u8g2.setCursor(0, 20);
-u8g2.print("C:");
-u8g2.print(isLocallyConvex ? "Yes" : "No");
-
-u8g2.setCursor(0, 30);
-u8g2.print("M:");
-u8g2.print(isMetrizable ? "Yes" : "No");
-
-u8g2.setCursor(0, 40);
-u8g2.print("P:");
-u8g2.print(calculateFrechetProbability(), 3);
+u8g2.print(frechetMetric, 6);
 
 // Draw graph inside display bounds
 // Clear the graph area (start from y=15 for example)
