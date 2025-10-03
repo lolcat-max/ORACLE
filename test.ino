@@ -28,13 +28,13 @@ U8G2_SSD1306_72X40_ER_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 #define GRAPH_HEIGHT 30
 
 // Oscillation parameters
-#define OSCILLATION_PROBABILITY 0.15  // 15% chance per cycle
-#define OSCILLATION_MIN_DURATION 50   // Min samples (1 second at 50Hz)
-#define OSCILLATION_MAX_DURATION 150  // Max samples (3 seconds)
-#define OSCILLATION_AMPLITUDE 0.05    // Voltage amplitude
+#define OSCILLATION_PROBABILITY 0.15
+#define OSCILLATION_MIN_DURATION 50
+#define OSCILLATION_MAX_DURATION 150
+#define OSCILLATION_AMPLITUDE 0.05
 
-// Analog input pins (adjust as per hardware)
-const int analogPins[NUM_CHANNELS] = {A0, A1, A2, A3};
+// Analog input pins
+const int analogPins[NUM_CHANNELS] = { A0, A1, A2, A3 };
 
 // Data buffers and variables
 float channelHistory[NUM_CHANNELS][HISTORY_SIZE];
@@ -63,8 +63,19 @@ unsigned long oscillationStartTime = 0;
 
 int historyIndex = 0;
 unsigned long lastSampleTime = 0;
-const unsigned long sampleIntervalMs = 20; // 50Hz sample rate
+const unsigned long sampleIntervalMs = 20;  // 50Hz sample rate
 int analysisCount = 0;
+
+// Gantt chart globals
+#define TASKS NUM_CHANNELS
+#define ROW_H 6
+#define ROW_G 1
+#define TOP_Y 15
+
+uint8_t gantt[TASKS][GRAPH_WIDTH];
+int head = 0;
+unsigned long lastFrame = 0;
+const unsigned long frameMs = 50;  // ~20 FPS
 
 // Function declarations
 void establishBaseline();
@@ -78,7 +89,8 @@ float calculateCorrelation(int ch1, int ch2);
 void updateOscillationState();
 float getOscillationValue(int channel);
 void updateFrechetHistory(float value);
-void drawGraph();
+void pushGanttSamples();
+void drawGanttChart();
 
 void setup() {
   Serial.begin(115200);
@@ -92,14 +104,76 @@ void setup() {
     oscillationFrequencies[i] = 0.0;
     oscillationPhases[i] = 0.0;
   }
+
+  // Initialize Gantt chart
+  for (int i = 0; i < TASKS; i++) {
+    for (int j = 0; j < GRAPH_WIDTH; j++) {
+      gantt[i][j] = 0;
+    }
+  }
+
   randomSeed(analogRead(A0) + analogRead(A1));
 
   establishBaseline();
   Serial.println("Setup complete - oscillations enabled");
 }
 
+void pushGanttSamples() {
+  // Check convergence condition
+  bool converging = false;
+  if (analysisCount >= MATRIX_SIZE) {
+    for (int i = 1; i < MATRIX_SIZE; i++) {
+      if (fabs(cauchySequence[0] - cauchySequence[i]) > FRECHET_THRESHOLD) {
+        converging = true;
+        break;
+      }
+    }
+  }
+
+  // Determine if each channel is active based on convergence and seminorm
+  for (int ch = 0; ch < TASKS; ch++) {
+    bool active = converging && (seminormVector[ch] > 100);
+    gantt[ch][head] = active ? 1 : 0;
+  }
+  head = (head + 1) % GRAPH_WIDTH;
+}
+
+void drawGanttChart() {
+  // Clear graph area
+  u8g2.setDrawColor(0);
+  u8g2.drawBox(0, TOP_Y, GRAPH_WIDTH, GRAPH_HEIGHT);
+  u8g2.setDrawColor(1);
+
+  // Draw each task row
+  for (int ch = 0; ch < TASKS; ch++) {
+    int y = TOP_Y + ch * (ROW_H + ROW_G);
+    int runStart = -1;
+
+    // Walk through visible columns and draw active segments
+    for (int x = 0; x < GRAPH_WIDTH; x++) {
+      int col = (head + x) % GRAPH_WIDTH;
+      uint8_t on = gantt[ch][col];
+
+      if (on && runStart < 0) {
+        runStart = x;
+      }
+
+      if ((!on || x == GRAPH_WIDTH - 1) && runStart >= 0) {
+        int runEnd = on ? x : x - 1;
+        int w = runEnd - runStart + 1;
+        if (w > 0) {
+          u8g2.drawBox(runStart, y, w, ROW_H);
+        }
+        runStart = -1;
+      }
+    }
+  }
+}
+
 void loop() {
   unsigned long now = millis();
+
+  // Sample at 50Hz
   if (now - lastSampleTime >= sampleIntervalMs) {
     lastSampleTime = now;
 
@@ -109,55 +183,28 @@ void loop() {
     updateCurrentMatrix();
     calculateFrechetMetrics();
     updateCauchySequence();
-
     updateFrechetHistory(frechetMetric);
+
+    // Push new sample to Gantt chart
+    pushGanttSamples();
 
     historyIndex = (historyIndex + 1) % HISTORY_SIZE;
     analysisCount++;
+  }
 
-    // Calculate entropy from seminorm variance
-    float meanSeminorm = 0.0;
-    for (int i = 0; i < MATRIX_SIZE; i++) {
-      meanSeminorm += seminormVector[i];
-    }
-    meanSeminorm /= MATRIX_SIZE;
-
-    float variance = 0.0;
-    for (int i = 0; i < MATRIX_SIZE; i++) {
-      float diff = seminormVector[i] - meanSeminorm;
-      variance += diff * diff;
-    }
-    variance /= MATRIX_SIZE;
-    bool lowEntropy = (variance < 10.0);
+  // Update display at ~20 FPS
+  if (now - lastFrame >= frameMs) {
+    lastFrame = now;
 
     u8g2.clearBuffer();
-u8g2.setFont(u8g2_font_ncenB08_tr);
+    u8g2.setFont(u8g2_font_ncenB08_tr);
 
-u8g2.setCursor(0, 10);
-u8g2.print(isLocallyConvex ? "TRUE" : "SCAN");
+    u8g2.setCursor(0, 10);
+    u8g2.print("Unity fuse");
 
-// Draw graph inside display bounds
-// Clear the graph area (start from y=15 for example)
-u8g2.setDrawColor(0);
-u8g2.drawBox(0, 15, GRAPH_WIDTH, 25);
-u8g2.setDrawColor(1);
+    drawGanttChart();
 
-float maxVal = frechetHistory[0];
-float minVal = frechetHistory[0];
-for (int i = 1; i < GRAPH_WIDTH; i++) {
-  if (frechetHistory[i] > maxVal) maxVal = frechetHistory[i];
-  if (frechetHistory[i] < minVal) minVal = frechetHistory[i];
-}
-if (fabs(maxVal - minVal) < 0.0001) maxVal = minVal + 1.0;
-
-for (int i = 0; i < GRAPH_WIDTH; i++) {
-  int idx = (frechetHistoryIndex + i) % GRAPH_WIDTH;
-  float normalized = (frechetHistory[idx] - minVal) / (maxVal - minVal);
-  int barHeight = (int)(normalized * 25);
-  u8g2.drawLine(i, 40, i, 40 - barHeight);
-}
-
-u8g2.sendBuffer();
+    u8g2.sendBuffer();
   }
 }
 
@@ -184,7 +231,7 @@ void sampleAllChannels() {
   for (int ch = 0; ch < NUM_CHANNELS; ch++) {
     int rawValue = analogRead(analogPins[ch]);
     float voltage = (rawValue / 4095.0) * 3.3;
-    voltage += getOscillationValue(ch); // add oscillation
+    voltage += getOscillationValue(ch);
     channelHistory[ch][historyIndex] = voltage;
   }
 }
@@ -296,7 +343,6 @@ void calculateFrechetMetrics() {
     }
   }
 
-  // Use sum of seminorms (normalized)
   frechetMetric = 0.0;
   for (int i = 0; i < MATRIX_SIZE; i++) {
     frechetMetric += seminormVector[i];
@@ -330,10 +376,7 @@ float calculateFrechetProbability() {
     changeRate = min(changeRate, 0.3f);
   }
 
-  float prob = baseProbability * 0.5 +
-               diversityFactor * 0.2 +
-               oscillationBoost +
-               changeRate;
+  float prob = baseProbability * 0.5 + diversityFactor * 0.2 + oscillationBoost + changeRate;
 
   float noise = (random(0, 100) - 50) / 1000.0;
   prob += noise;
