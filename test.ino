@@ -24,12 +24,12 @@ const int yOffset = 12;
 #define MATRIX_SIZE 4
 #define HISTORY_SIZE 20
 #define SMOOTHING_WINDOW 7
-#define FRECHET_THRESHOLD 0.030
+#define FRECHET_THRESHOLD 0.0030
 #define CHARGE_THRESHOLD 0.1
 #define SIGNAL_AMPLIFICATION 100.0
 
 #define GRAPH_WIDTH 72
-#define GRAPH_HEIGHT 30 // This defines the logical area, not physical screen
+#define GRAPH_HEIGHT 30
 
 // Oscillation parameters
 #define OSCILLATION_PROBABILITY 0.15
@@ -44,15 +44,12 @@ const int analogPins[NUM_CHANNELS] = { A0, A1, A2, A3 };
 float channelHistory[NUM_CHANNELS][HISTORY_SIZE];
 float smoothedData[NUM_CHANNELS][HISTORY_SIZE];
 float baselineVoltages[NUM_CHANNELS];
-float chargeAccumulation[NUM_CHANNELS];
 float currentMatrix[MATRIX_SIZE][MATRIX_SIZE];
-float metricMatrix[MATRIX_SIZE][MATRIX_SIZE];
 float seminormVector[MATRIX_SIZE];
-float cauchySequence[MATRIX_SIZE];
 
-float frechetMetric = 0.0;
-bool isLocallyConvex = false;
-bool isMetrizable = false;
+// NEW: A matrix to store the results of our translation-invariant metric
+float distanceMatrix[MATRIX_SIZE][MATRIX_SIZE]; 
+float cauchySequence[MATRIX_SIZE];
 
 // Oscillation state
 bool isOscillating = false;
@@ -64,38 +61,38 @@ unsigned long oscillationStartTime = 0;
 
 int historyIndex = 0;
 unsigned long lastSampleTime = 0;
-const unsigned long sampleIntervalMs = 2; // 50Hz sample rate
+const unsigned long sampleIntervalMs = 2;
 int analysisCount = 0;
 
 // Gantt chart globals
 #define TASKS NUM_CHANNELS
 #define ROW_H 6
 #define ROW_G 1
-#define TOP_Y 10 // Adjusted to fit nicely with offset
+#define TOP_Y 10
 
 uint8_t gantt[TASKS][GRAPH_WIDTH];
 int head = 0;
 unsigned long lastFrame = 0;
-const unsigned long frameMs = 50; // ~20 FPS
+const unsigned long frameMs = 50;
 
-// Function declarations are unchanged
 void establishBaseline();
 void sampleAllChannels();
-// ... and so on
+// ... other function declarations
 
 void setup() {
   Serial.begin(115200);
   
-  // CORRECTED: Initialize I2C bus first
   Wire.begin(SDA_PIN, SCL_PIN);
   u8g2.begin();
 
-  // Initialize arrays (your original code)
   for (int i = 0; i < MATRIX_SIZE; i++) {
     cauchySequence[i] = 0.0;
     seminormVector[i] = 0.0;
     oscillationFrequencies[i] = 0.0;
     oscillationPhases[i] = 0.0;
+    for (int j = 0; j < MATRIX_SIZE; j++) {
+      distanceMatrix[i][j] = 0.0;
+    }
   }
   for (int i = 0; i < TASKS; i++) {
     for (int j = 0; j < GRAPH_WIDTH; j++) {
@@ -105,10 +102,10 @@ void setup() {
 
   randomSeed(analogRead(A0) + analogRead(A1));
   establishBaseline();
-  Serial.println("Setup complete - Fréchet space with corrected display");
+  Serial.println("Setup complete - Using Translation-Invariant Complete Metric");
 }
 
-// Your original logic for these functions is preserved
+// Your original logic is preserved where not specified
 bool areChannelsOptimal() {
   if (analysisCount < MATRIX_SIZE) return false;
   bool converging = false;
@@ -119,6 +116,8 @@ bool areChannelsOptimal() {
     }
   }
   if (!converging) return false;
+  
+  // Seminorm check remains useful for individual channel activity
   for (int ch = 0; ch < 3; ch++) {
     if (seminormVector[ch] <= 100) return false;
   }
@@ -142,23 +141,17 @@ void pushGanttSamples() {
   head = (head + 1) % GRAPH_WIDTH;
 }
 
-// CORRECTED: drawGanttChart now uses offsets
 void drawGanttChart() {
-  // Draw each task row, applying offsets
   for (int ch = 0; ch < TASKS; ch++) {
     int y = yOffset + TOP_Y + ch * (ROW_H + ROW_G);
     int runStart = -1;
     for (int x = 0; x < GRAPH_WIDTH; x++) {
       int col = (head + x) % GRAPH_WIDTH;
-      if (gantt[ch][col] && runStart < 0) {
-        runStart = x;
-      }
+      if (gantt[ch][col] && runStart < 0) runStart = x;
       if ((!gantt[ch][col] || x == GRAPH_WIDTH - 1) && runStart >= 0) {
         int runEnd = gantt[ch][col] ? x : x - 1;
         int w = runEnd - runStart + 1;
-        if (w > 0) {
-          u8g2.drawBox(xOffset + runStart, y, w, ROW_H);
-        }
+        if (w > 0) u8g2.drawBox(xOffset + runStart, y, w, ROW_H);
         runStart = -1;
       }
     }
@@ -174,13 +167,11 @@ void loop() {
       Serial.println("YES");
     }
     
-    // Your analysis pipeline is unchanged
     updateOscillationState();
     sampleAllChannels();
     applySmoothingFilter();
-    updateCurrentMatrix();
-    calculateFrechetMetrics();
-    updateCauchySequence();
+    updateCurrentMatrix(); // Still useful for seminorms
+    updateDistanceAndCauchyMetrics(); // The new core metric calculation
     pushGanttSamples();
 
     historyIndex = (historyIndex + 1) % HISTORY_SIZE;
@@ -189,24 +180,79 @@ void loop() {
 
   if (now - lastFrame >= frameMs) {
     lastFrame = now;
-
-    // CORRECTED: Using page buffer loop for memory safety
     u8g2.firstPage();
     do {
       u8g2.setFont(u8g2_font_ncenB08_tr);
-      
-      // Apply offset to cursor for text
       u8g2.setCursor(xOffset, yOffset + 8);
       u8g2.print("Unity fuse");
-
-      // Draw chart (which now has offsets internally)
       drawGanttChart();
-
     } while (u8g2.nextPage());
   }
 }
 
-// --- All other functions (establishBaseline, sampleAllChannels, etc.) are exactly as you provided them ---
+// --- NEW AND MODIFIED FUNCTIONS ---
+
+/**
+ * @brief Calculates the Euclidean distance between two channels' smoothed data history.
+ * This is a translation-invariant metric.
+ * d(ch1, ch2) = sqrt(Σ(ch1_data[i] - ch2_data[i])^2)
+ */
+float calculateDistanceMetric(int ch1, int ch2) {
+  float sumOfSquares = 0.0;
+  int samples = min(HISTORY_SIZE, analysisCount);
+  if (samples == 0) return 0.0;
+
+  for (int i = 0; i < samples; i++) {
+    int idx = (historyIndex - i + HISTORY_SIZE) % HISTORY_SIZE;
+    float diff = smoothedData[ch1][idx] - smoothedData[ch2][idx];
+    sumOfSquares += diff * diff;
+  }
+  return sqrt(sumOfSquares / samples); // Return RMSE for normalization
+}
+
+/**
+ * @brief Updates the distance matrix and the Cauchy sequence.
+ * This function formalizes the complete metric space properties.
+ */
+void updateDistanceAndCauchyMetrics() {
+  // 1. Calculate seminorms (as before, useful for activity detection)
+  for (int i = 0; i < MATRIX_SIZE; i++) {
+    float norm = 0.0;
+    for (int j = 0; j < MATRIX_SIZE; j++) {
+      norm += currentMatrix[i][j] * currentMatrix[i][j];
+    }
+    seminormVector[i] = sqrt(norm);
+  }
+
+  // 2. Populate the distance matrix using the translation-invariant metric
+  float frobeniusNormSq = 0.0;
+  for (int i = 0; i < MATRIX_SIZE; i++) {
+    for (int j = i; j < MATRIX_SIZE; j++) {
+      if (i == j) {
+        distanceMatrix[i][j] = 0.0;
+      } else {
+        float dist = calculateDistanceMetric(i, j);
+        distanceMatrix[i][j] = dist;
+        distanceMatrix[j][i] = dist; // The metric is symmetric
+      }
+      frobeniusNormSq += distanceMatrix[i][j] * distanceMatrix[i][j];
+    }
+  }
+
+  // 3. Update the Cauchy sequence with a single value representing system state
+  // We use the Frobenius norm of the distance matrix. If the channels converge
+  // to similar patterns, this norm will approach zero.
+  float systemStateMetric = sqrt(frobeniusNormSq);
+
+  // Shift the history
+  for (int i = MATRIX_SIZE - 1; i > 0; i--) {
+    cauchySequence[i] = cauchySequence[i - 1];
+  }
+  cauchySequence[0] = systemStateMetric;
+}
+
+
+// --- UNCHANGED FUNCTIONS from your original code ---
 
 void establishBaseline() {
   Serial.println("Establishing baseline...");
@@ -309,31 +355,4 @@ float calculateCorrelation(int ch1, int ch2) {
     return (covariance / (std1 * std2)) * SIGNAL_AMPLIFICATION;
   }
   return 0.0;
-}
-
-void calculateFrechetMetrics() {
-  for (int i = 0; i < MATRIX_SIZE; i++) {
-    float norm = 0.0;
-    for (int j = 0; j < MATRIX_SIZE; j++) {
-      norm += currentMatrix[i][j] * currentMatrix[i][j];
-    }
-    seminormVector[i] = sqrt(norm);
-  }
-  for (int i = 0; i < MATRIX_SIZE; i++) {
-    for (int j = 0; j < MATRIX_SIZE; j++) {
-      metricMatrix[i][j] = fabs(seminormVector[i] - seminormVector[j]);
-    }
-  }
-  frechetMetric = 0.0;
-  for (int i = 0; i < MATRIX_SIZE; i++) {
-    frechetMetric += seminormVector[i];
-  }
-  frechetMetric /= MATRIX_SIZE;
-}
-
-void updateCauchySequence() {
-  for (int i = MATRIX_SIZE - 1; i > 0; i--) {
-    cauchySequence[i] = cauchySequence[i - 1];
-  }
-  cauchySequence[0] = frechetMetric;
 }
