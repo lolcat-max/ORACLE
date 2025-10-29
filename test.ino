@@ -9,18 +9,19 @@
 #include <Wire.h>
 #endif
 
-// Pins
 #define SDA_PIN 5
 #define SCL_PIN 6
 
-// Display: memory-optimized page buffer
-U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL_PIN, /* data=*/ SDA_PIN);
+// CORRECTED DISPLAY SETUP: Using memory-optimized page buffer constructor
+U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(
+  U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL_PIN, /* data=*/ SDA_PIN
+);
 
-// Visible area offsets (keep your 72x40 window centered)
+// Offsets for the 72x40 visible area
 const int xOffset = 30;
 const int yOffset = 12;
 
-// Parameters
+// Constants and parameters
 #define NUM_CHANNELS 4
 #define MATRIX_SIZE 4
 #define HISTORY_SIZE 20
@@ -41,14 +42,14 @@ const int yOffset = 12;
 // Analog input pins
 const int analogPins[NUM_CHANNELS] = { A0, A1, A2, A3 };
 
-// Data buffers
+// Data buffers and variables
 float channelHistory[NUM_CHANNELS][HISTORY_SIZE];
 float smoothedData[NUM_CHANNELS][HISTORY_SIZE];
 float baselineVoltages[NUM_CHANNELS];
 float currentMatrix[MATRIX_SIZE][MATRIX_SIZE];
 float seminormVector[MATRIX_SIZE];
 
-// Translation-invariant metric state
+// Translation-invariant metric structures
 float distanceMatrix[MATRIX_SIZE][MATRIX_SIZE];
 float cauchySequence[MATRIX_SIZE];
 
@@ -60,12 +61,13 @@ float oscillationFrequencies[NUM_CHANNELS];
 float oscillationPhases[NUM_CHANNELS];
 unsigned long oscillationStartTime = 0;
 
-// Time and counters
+// Sampling scheduler
 int historyIndex = 0;
 unsigned long lastSampleTime = 0;
 const unsigned long sampleIntervalMs = 2;
-int analysisCount = 0;   // this is our integer "i" (step)
+int analysisCount = 0;
 
+// Gantt chart globals
 #define TASKS NUM_CHANNELS
 #define ROW_H 6
 #define ROW_G 1
@@ -73,68 +75,17 @@ int analysisCount = 0;   // this is our integer "i" (step)
 
 uint8_t gantt[TASKS][GRAPH_WIDTH];
 int head = 0;
+
+// Adaptive frame timing (proportional speed-up to activity)
 unsigned long lastFrame = 0;
-const unsigned long frameMs = 50;
+const unsigned long frameMsBase = 50;     // baseline refresh interval
+unsigned long frameMsAdaptive = frameMsBase;
+float activityEMA = 0.0f;                 // smoothed activity [0..1]
+const float activityAlpha = 0.3f;         // EMA smoothing factor
+const float minSpeedup = 1.0f;            // 1x at no activity
+const float maxSpeedup = 4.0f;            // up to 4x faster at full activity
 
-// ===== Superpolynomial scheduling utilities =====
-// Superpolynomial in i (subexponential): 2^{sqrt(i)}
-static inline uint32_t superpoly_subexp_sqrt(uint32_t i) {
-  if (i == 0) return 1;
-  double v = pow(2.0, sqrt((double)i));
-  if (v > 1e9) v = 1e9;
-  return (uint32_t)v;
-}
-
-// Quasi-polynomial in i: i^{log2 i}
-static inline uint32_t superpoly_quasi(uint32_t i) {
-  if (i < 2) return 1;
-  double lg = log((double)i) / log(2.0);
-  double v = pow((double)i, lg);
-  if (v > 1e9) v = 1e9;
-  return (uint32_t)v;
-}
-
-// Quasi-polynomial in N: N^{log2 N}
-static inline uint32_t superpoly_from_N(uint32_t N) {
-  if (N < 2) return 1;
-  double lg = log((double)N) / log(2.0);
-  double v = pow((double)N, lg);
-  if (v > 1e9) v = 1e9;
-  return (uint32_t)v;
-}
-
-// Step-driven trigger: fire when floor(log2(f(i))) changes or f(i) divisible by small base
-static inline bool trigger_alt_superpoly(uint32_t i, uint32_t base) {
-  if (i == 0) return false;
-  uint32_t f = superpoly_subexp_sqrt(i);
-  uint32_t prev = superpoly_subexp_sqrt(i - 1);
-  uint32_t lg  = (uint32_t)floor(log((double)(f > 1 ? f : 2)) / log(2.0));
-  uint32_t lgp = (uint32_t)floor(log((double)(prev > 1 ? prev : 2)) / log(2.0));
-  bool changed_scale = (lg != lgp);
-  bool divisible     = (base > 0) && (f % base == 0);
-  return changed_scale || divisible;
-}
-
-// Step-driven trigger for automorphisms: bucketed change in quasi-polynomial
-static inline bool trigger_auto_superpoly(uint32_t i, uint32_t period) {
-  if (i == 0) return false;
-  uint32_t g  = superpoly_quasi(i);
-  uint32_t gp = superpoly_quasi(i - 1);
-  uint32_t b  = period > 0 ? (g / period) : g;
-  uint32_t bp = period > 0 ? (gp / period) : gp;
-  return (b != bp);
-}
-
-// Optional: N-driven candidate “expansion” analog (here, widen active runs sparsely)
-static inline bool trigger_N_bucket(uint32_t i, uint32_t N) {
-  uint32_t gate = superpoly_from_N(N);
-  if (gate <= 1) return false;
-  uint32_t bucket = (uint32_t)floor(log((double)gate) / log(2.0));
-  uint32_t mod = bucket < 2 ? 2 : bucket;
-  return (i % mod) == 0;
-}
-
-// ===== Declarations =====
+// Declarations
 void establishBaseline();
 void sampleAllChannels();
 void applySmoothingFilter();
@@ -147,8 +98,9 @@ float getOscillationValue(int channel);
 bool areChannelsOptimal();
 void pushGanttSamples();
 void drawGanttChart();
+void updateAdaptiveFrameInterval();
 
-// ===== Setup =====
+// Setup
 void setup() {
   Serial.begin(115200);
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -174,7 +126,7 @@ void setup() {
   Serial.println("Setup complete - Using Translation-Invariant Complete Metric");
 }
 
-// ===== Optimality check (unchanged logic with thresholds) =====
+// Optimality
 bool areChannelsOptimal() {
   if (analysisCount < MATRIX_SIZE) return false;
   bool converging = false;
@@ -192,40 +144,39 @@ bool areChannelsOptimal() {
   return true;
 }
 
-// ===== Gantt update =====
+// Push Gantt column and compute activity
 void pushGanttSamples() {
-  bool converging = false;
+  bool converging = true;
   if (analysisCount >= MATRIX_SIZE) {
     for (int i = 1; i < MATRIX_SIZE; i++) {
       if (fabs(cauchySequence[0] - cauchySequence[i]) > FRECHET_THRESHOLD) {
-        converging = true;
+        converging = false;
         break;
       }
     }
   }
 
-  // Base activity
+  // Write current column at head
   for (int ch = 0; ch < TASKS; ch++) {
     bool active = converging && (seminormVector[ch] > 100);
     gantt[ch][head] = active ? 1 : 0;
   }
 
-  // Optional N-driven widening (simulate candidate expansion pressure)
-  if (trigger_N_bucket((uint32_t)analysisCount, (uint32_t)HISTORY_SIZE * (uint32_t)NUM_CHANNELS)) {
-    // Widen recent active runs by 1 to the right if active
-    int x = (head + GRAPH_WIDTH - 1) % GRAPH_WIDTH;
-    for (int ch = 0; ch < TASKS; ch++) {
-      if (gantt[ch][x]) {
-        int xr = (x + 1) % GRAPH_WIDTH;
-        gantt[ch][xr] = 1;
-      }
-    }
+  // Compute instantaneous activity as fraction of 1s in this column
+  int ones = 0;
+  for (int ch = 0; ch < TASKS; ch++) {
+    if (gantt[ch][head]) ones++;
   }
+  float activity = (float)ones / (float)TASKS;
 
+  // Smooth activity to avoid jittery frame changes (EMA)
+  activityEMA = (1.0f - activityAlpha) * activityEMA + activityAlpha * activity;
+
+  // Advance write head
   head = (head + 1) % GRAPH_WIDTH;
 }
 
-// ===== Draw Gantt =====
+// Draw Gantt
 void drawGanttChart() {
   for (int ch = 0; ch < TASKS; ch++) {
     int y = yOffset + TOP_Y + ch * (ROW_H + ROW_G);
@@ -243,17 +194,28 @@ void drawGanttChart() {
   }
 }
 
-// ===== Loop with superpolynomial scheduling =====
+// Adaptive frame scheduler from activityEMA
+void updateAdaptiveFrameInterval() {
+  // Map activity in [0,1] to speedup in [minSpeedup,maxSpeedup]
+  float speedup = minSpeedup + (maxSpeedup - minSpeedup) * activityEMA;
+  if (speedup < minSpeedup) speedup = minSpeedup;
+  if (speedup > maxSpeedup) speedup = maxSpeedup;
+
+  // Convert to adaptive frame interval (smaller interval = faster scroll)
+  float fInterval = (float)frameMsBase / speedup;
+  if (fInterval < 5.0f) fInterval = 5.0f;                  // hard lower bound to avoid I2C thrash
+  frameMsAdaptive = (unsigned long)(fInterval + 0.5f);
+}
+
+// Loop
 void loop() {
   unsigned long now = millis();
 
+  // Sampling/analysis cadence
   if (now - lastSampleTime >= sampleIntervalMs) {
     lastSampleTime = now;
 
-    // Integer-driven alternation with superpolynomial gate:
-    // If triggered, print YES and push samples emphasizing "onto" coverage
-    bool alt_trigger = trigger_alt_superpoly((uint32_t)(analysisCount + 1), /*base*/ 4);
-    if (alt_trigger && areChannelsOptimal()) {
+    if (areChannelsOptimal()) {
       Serial.println("YES");
     }
 
@@ -262,23 +224,17 @@ void loop() {
     applySmoothingFilter();
     updateCurrentMatrix();
     updateDistanceAndCauchyMetrics();
-
-    // Push Gantt samples every step; the superpoly logic affects activity and widening
     pushGanttSamples();
-
-    // Integer-driven automorphism-like state flip:
-    // Use a quasi-polynomial trigger to jitter the head pointer (visual symmetry flip)
-    bool auto_trigger = trigger_auto_superpoly((uint32_t)(analysisCount + 1), /*period*/ 5);
-    if (auto_trigger) {
-      // swap the last two columns logically by moving head back one step (involution-like)
-      head = (head + GRAPH_WIDTH - 2) % GRAPH_WIDTH;
-    }
 
     historyIndex = (historyIndex + 1) % HISTORY_SIZE;
     analysisCount++;
+
+    // Update the adaptive frame interval after new activity was computed
+    updateAdaptiveFrameInterval();
   }
 
-  if (now - lastFrame >= frameMs) {
+  // Adaptive frame refresh using millis scheduling
+  if (now - lastFrame >= frameMsAdaptive) {
     lastFrame = now;
     u8g2.firstPage();
     do {
@@ -290,7 +246,9 @@ void loop() {
   }
 }
 
-// ===== Metrics =====
+// NEW AND MODIFIED FUNCTIONS
+
+// Euclidean distance between two channels' smoothed data histories (RMSE)
 float calculateDistanceMetric(int ch1, int ch2) {
   float sumOfSquares = 0.0;
   int samples = min(HISTORY_SIZE, analysisCount);
@@ -304,6 +262,7 @@ float calculateDistanceMetric(int ch1, int ch2) {
   return sqrt(sumOfSquares / samples);
 }
 
+// Update distance matrix and Cauchy sequence (Frobenius norm)
 void updateDistanceAndCauchyMetrics() {
   // Seminorms
   for (int i = 0; i < MATRIX_SIZE; i++) {
@@ -331,14 +290,14 @@ void updateDistanceAndCauchyMetrics() {
 
   float systemStateMetric = sqrt(frobeniusNormSq);
 
-  // Shift Cauchy sequence
+  // Shift Cauchy history and insert head
   for (int i = MATRIX_SIZE - 1; i > 0; i--) {
     cauchySequence[i] = cauchySequence[i - 1];
   }
   cauchySequence[0] = systemStateMetric;
 }
 
-// ===== Baseline / sampling / smoothing / matrix =====
+// Baseline calibration
 void establishBaseline() {
   Serial.println("Establishing baseline...");
   const int samples = 50;
@@ -349,11 +308,12 @@ void establishBaseline() {
       delay(10);
     }
     baselineVoltages[ch] = sum / samples;
-    Serial.print("Channel "); Serial.print(ch);
-    Serial.print(" baseline: "); Serial.println(baselineVoltages[ch], 4);
+    Serial.print("Channel "); Serial.print(ch); Serial.print(" baseline: ");
+    Serial.println(baselineVoltages[ch], 4);
   }
 }
 
+// Sampling
 void sampleAllChannels() {
   for (int ch = 0; ch < NUM_CHANNELS; ch++) {
     float voltage = (analogRead(analogPins[ch]) / 4095.0) * 3.3;
@@ -362,6 +322,7 @@ void sampleAllChannels() {
   }
 }
 
+// Smoothing
 void applySmoothingFilter() {
   for (int ch = 0; ch < NUM_CHANNELS; ch++) {
     float sum = 0.0;
@@ -375,6 +336,7 @@ void applySmoothingFilter() {
   }
 }
 
+// Update currentMatrix (diagonal: amplified deviation; off-diagonal: correlation)
 void updateCurrentMatrix() {
   for (int i = 0; i < MATRIX_SIZE; i++) {
     for (int j = 0; j < MATRIX_SIZE; j++) {
@@ -388,6 +350,7 @@ void updateCurrentMatrix() {
   }
 }
 
+// Correlation
 float calculateCorrelation(int ch1, int ch2) {
   if (analysisCount < 3) return 0.0;
   float sum1 = 0, sum2 = 0, sum12 = 0, sumSq1 = 0, sumSq2 = 0;
@@ -410,7 +373,7 @@ float calculateCorrelation(int ch1, int ch2) {
   return 0.0;
 }
 
-// ===== Oscillation =====
+// Oscillation state
 void updateOscillationState() {
   if (!isOscillating) {
     if (random(1000) < (OSCILLATION_PROBABILITY * 1000)) {
@@ -431,6 +394,7 @@ void updateOscillationState() {
   }
 }
 
+// Oscillation value
 float getOscillationValue(int channel) {
   if (!isOscillating) return 0.0;
   float timeInSeconds = (millis() - oscillationStartTime) / 1000.0;
