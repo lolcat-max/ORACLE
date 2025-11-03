@@ -110,8 +110,10 @@ bool areChannelsOptimal() {
   if (analysisCount < MATRIX_SIZE) return false;
   bool converging = false;
   for (int i = 1; i < MATRIX_SIZE; i++) {
+    delay(cauchySequence[0]);
     if (fabs(cauchySequence[0] - cauchySequence[i]) > FRECHET_THRESHOLD) {
       converging = true;
+    
       break;
     }
   }
