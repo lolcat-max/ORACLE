@@ -14,8 +14,8 @@
 
 U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL_PIN, /* data=*/ SDA_PIN);
 
-const int xOffset = 30;
-const int yOffset = 12;
+const int xOffset = 28;
+const int yOffset = 20;
 
 #define NUM_CHANNELS 4
 #define MATRIX_SIZE 4
@@ -195,7 +195,6 @@ void loop() {
     do {
       u8g2.setFont(u8g2_font_ncenB08_tr);
       u8g2.setCursor(xOffset, yOffset + 8);
-      u8g2.print("Unity fuse");
       drawStaticChart();
     } while (u8g2.nextPage());
   }
