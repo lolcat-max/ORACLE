@@ -31,6 +31,11 @@ const int yOffset = 20;
 #define OSCILLATION_MAX_DURATION 150
 #define OSCILLATION_AMPLITUDE 0.05
 
+// Polynomial variance parameters
+#define POLY_DEGREE 2
+#define POLY_WINDOW_SIZE 10
+#define VARIANCE_HISTORY 50
+
 const int analogPins[NUM_CHANNELS] = { A0, A1, A2, A3 };
 
 float channelHistory[NUM_CHANNELS][HISTORY_SIZE];
@@ -40,6 +45,12 @@ float currentMatrix[MATRIX_SIZE][MATRIX_SIZE];
 float seminormVector[MATRIX_SIZE];
 float distanceMatrix[MATRIX_SIZE][MATRIX_SIZE]; 
 float cauchySequence[MATRIX_SIZE];
+
+// Polynomial variance tracking
+float varianceHistory[NUM_CHANNELS][VARIANCE_HISTORY];
+int varianceIndex = 0;
+float currentVariance[NUM_CHANNELS];
+float polyCoeffs[NUM_CHANNELS][POLY_DEGREE + 1];
 
 bool isOscillating = false;
 int oscillationCounter = 0;
@@ -58,10 +69,10 @@ int analysisCount = 0;
 #define ROW_G 1
 #define TOP_Y 10
 
-// Static chart state - now stores current activity state
-bool ganttCurrentState[TASKS];
+// Dynamic chart state with polynomial variance
+float ganttIntensity[TASKS];
 unsigned long ganttLastUpdate[TASKS];
-const unsigned long STATE_MIN_DURATION_MS = 100; // Minimum time to show a state
+const unsigned long STATE_MIN_DURATION_MS = 100;
 
 unsigned long lastFrame = 0;
 const unsigned long frameMs = 50;
@@ -82,10 +93,12 @@ void sampleAllChannels();
 void applySmoothingFilter();
 void updateCurrentMatrix();
 void updateDistanceAndCauchyMetrics();
+void calculatePolynomialVariance();
 float calculateCorrelation(int ch1, int ch2);
 float calculateDistanceMetric(int ch1, int ch2);
 float getOscillationValue(int channel);
-void drawStaticChart();
+void drawVarianceChart();
+bool solveLinearSystem(float A[][POLY_DEGREE + 1], float b[], float x[], int n);
 
 void setup() {
   Serial.begin(115200);
@@ -97,19 +110,23 @@ void setup() {
     seminormVector[i] = 0.0;
     oscillationFrequencies[i] = 0.0;
     oscillationPhases[i] = 0.0;
+    currentVariance[i] = 0.0;
+    ganttIntensity[i] = 0.0;
     for (int j = 0; j < MATRIX_SIZE; j++) {
       distanceMatrix[i][j] = 0.0;
+    }
+    for (int j = 0; j < VARIANCE_HISTORY; j++) {
+      varianceHistory[i][j] = 0.0;
     }
   }
   
   for (int i = 0; i < TASKS; i++) {
-    ganttCurrentState[i] = false;
     ganttLastUpdate[i] = 0;
   }
 
   randomSeed(analogRead(A0) + analogRead(A1));
   establishBaseline();
-  Serial.println("Setup complete - Using Translation-Invariant Complete Metric");
+  Serial.println("Setup complete - Polynomial Time Variance Analysis");
 }
 
 LogicState evalLogic(unsigned long now) {
@@ -167,25 +184,30 @@ void loop() {
     applySmoothingFilter();
     updateCurrentMatrix();
     updateDistanceAndCauchyMetrics();
+    
+    // Calculate polynomial variance for temporal analysis
+    if (analysisCount >= POLY_WINDOW_SIZE) {
+      calculatePolynomialVariance();
+    }
 
     if (s.p_optimal) {
       Serial.println("YES");
     }
 
-    // Update current state for each channel
+    // Update intensity based on polynomial variance
     for (int ch = 0; ch < TASKS; ch++) {
       bool activeCh = s.p_converge && (seminormVector[ch] > 100.0f);
       
-      // Update state with minimum duration check
-      if (activeCh != ganttCurrentState[ch]) {
-        if (now - ganttLastUpdate[ch] >= STATE_MIN_DURATION_MS) {
-          ganttCurrentState[ch] = activeCh;
-          ganttLastUpdate[ch] = now;
-        }
-      }
+      // Smooth transition using variance as weight
+      float targetIntensity = activeCh ? (1.0 + currentVariance[ch] * 10.0) : 0.0;
+      targetIntensity = constrain(targetIntensity, 0.0, 1.0);
+      
+      // Exponential smoothing
+      ganttIntensity[ch] = ganttIntensity[ch] * 0.7 + targetIntensity * 0.3;
     }
 
     historyIndex = (historyIndex + 1) % HISTORY_SIZE;
+    varianceIndex = (varianceIndex + 1) % VARIANCE_HISTORY;
     analysisCount++;
   }
 
@@ -195,7 +217,7 @@ void loop() {
     do {
       u8g2.setFont(u8g2_font_ncenB08_tr);
       u8g2.setCursor(xOffset, yOffset + 8);
-      drawStaticChart();
+      drawVarianceChart();
     } while (u8g2.nextPage());
   }
 }
@@ -332,23 +354,148 @@ void updateDistanceAndCauchyMetrics() {
   cauchySequence[0] = systemStateMetric;
 }
 
-void drawStaticChart() {
-  // Draw static bars for each channel showing current state
+// Gaussian elimination solver for polynomial fitting
+bool solveLinearSystem(float A[][POLY_DEGREE + 1], float b[], float x[], int n) {
+  float augmented[POLY_DEGREE + 1][POLY_DEGREE + 2];
+  
+  // Create augmented matrix
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      augmented[i][j] = A[i][j];
+    }
+    augmented[i][n] = b[i];
+  }
+  
+  // Forward elimination
+  for (int i = 0; i < n; i++) {
+    // Find pivot
+    int maxRow = i;
+    for (int k = i + 1; k < n; k++) {
+      if (fabs(augmented[k][i]) > fabs(augmented[maxRow][i])) {
+        maxRow = k;
+      }
+    }
+    
+    // Swap rows
+    for (int k = i; k <= n; k++) {
+      float tmp = augmented[maxRow][k];
+      augmented[maxRow][k] = augmented[i][k];
+      augmented[i][k] = tmp;
+    }
+    
+    // Check for singular matrix
+    if (fabs(augmented[i][i]) < 1e-10) {
+      return false;
+    }
+    
+    // Eliminate column
+    for (int k = i + 1; k < n; k++) {
+      float factor = augmented[k][i] / augmented[i][i];
+      for (int j = i; j <= n; j++) {
+        augmented[k][j] -= factor * augmented[i][j];
+      }
+    }
+  }
+  
+  // Back substitution
+  for (int i = n - 1; i >= 0; i--) {
+    x[i] = augmented[i][n];
+    for (int j = i + 1; j < n; j++) {
+      x[i] -= augmented[i][j] * x[j];
+    }
+    x[i] /= augmented[i][i];
+  }
+  
+  return true;
+}
+
+void calculatePolynomialVariance() {
+  for (int ch = 0; ch < NUM_CHANNELS; ch++) {
+    // Build design matrix for polynomial fit
+    float A[POLY_DEGREE + 1][POLY_DEGREE + 1];
+    float b[POLY_DEGREE + 1];
+    
+    // Initialize matrices
+    for (int i = 0; i <= POLY_DEGREE; i++) {
+      b[i] = 0.0;
+      for (int j = 0; j <= POLY_DEGREE; j++) {
+        A[i][j] = 0.0;
+      }
+    }
+    
+    // Collect data points from recent history
+    for (int k = 0; k < POLY_WINDOW_SIZE; k++) {
+      int idx = (historyIndex - k + HISTORY_SIZE) % HISTORY_SIZE;
+      float t = (float)k / POLY_WINDOW_SIZE; // Normalized time
+      float y = smoothedData[ch][idx] - baselineVoltages[ch];
+      
+      // Build normal equations: A^T * A * x = A^T * y
+      for (int i = 0; i <= POLY_DEGREE; i++) {
+        float ti = pow(t, i);
+        b[i] += ti * y;
+        for (int j = 0; j <= POLY_DEGREE; j++) {
+          float tj = pow(t, j);
+          A[i][j] += ti * tj;
+        }
+      }
+    }
+    
+    // Solve for polynomial coefficients
+    if (solveLinearSystem(A, b, polyCoeffs[ch], POLY_DEGREE + 1)) {
+      // Calculate variance (mean squared error)
+      float sumSquaredError = 0.0;
+      for (int k = 0; k < POLY_WINDOW_SIZE; k++) {
+        int idx = (historyIndex - k + HISTORY_SIZE) % HISTORY_SIZE;
+        float t = (float)k / POLY_WINDOW_SIZE;
+        float y = smoothedData[ch][idx] - baselineVoltages[ch];
+        
+        // Evaluate polynomial
+        float yFit = 0.0;
+        for (int i = 0; i <= POLY_DEGREE; i++) {
+          yFit += polyCoeffs[ch][i] * pow(t, i);
+        }
+        
+        float error = y - yFit;
+        sumSquaredError += error * error;
+      }
+      
+      currentVariance[ch] = sumSquaredError / POLY_WINDOW_SIZE;
+      varianceHistory[ch][varianceIndex] = currentVariance[ch];
+    }
+  }
+}
+
+void drawVarianceChart() {
+  // Draw bars with intensity based on polynomial variance
   for (int ch = 0; ch < TASKS; ch++) {
     int y = yOffset + TOP_Y + ch * (ROW_H + ROW_G);
     
-    if (ganttCurrentState[ch]) {
-      // Draw filled bar when active
-      u8g2.drawBox(xOffset, y, GRAPH_WIDTH, ROW_H);
+    // Calculate bar width based on intensity (0.0 to 1.0)
+    int barWidth = (int)(GRAPH_WIDTH * ganttIntensity[ch]);
+    
+    if (barWidth > 2) {
+      // Draw filled bar proportional to variance intensity
+      u8g2.drawBox(xOffset, y, barWidth, ROW_H);
+      
+      // Draw outline for full width
+      u8g2.drawFrame(xOffset, y, GRAPH_WIDTH, ROW_H);
     } else {
-      // Draw outline bar when inactive
+      // Draw outline only when inactive
       u8g2.drawFrame(xOffset, y, GRAPH_WIDTH, ROW_H);
     }
     
-    // Optional: Add channel label
+    // Channel label
     u8g2.setFont(u8g2_font_micro_tr);
     char label[4];
     sprintf(label, "C%d", ch);
     u8g2.drawStr(xOffset - 12, y + ROW_H - 1, label);
+    
+    // Show variance value
+    if (ganttIntensity[ch] > 0.1) {
+      char varStr[6];
+      int varInt = (int)(currentVariance[ch] * 1000);
+      sprintf(varStr, "%d", varInt);
+      u8g2.drawStr(xOffset + GRAPH_WIDTH + 2, y + ROW_H - 1, varStr);
+    }
   }
 }
