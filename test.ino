@@ -12,35 +12,54 @@
 #define SDA_PIN 5
 #define SCL_PIN 6
 
+// DISPLAY SETUP
 U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL_PIN, /* data=*/ SDA_PIN);
 
+// VISUAL OFFSETS
 const int xOffset = 30;
 const int yOffset = 12;
 
+// SYSTEM CONSTANTS
 #define NUM_CHANNELS 4
 #define MATRIX_SIZE 4
 #define HISTORY_SIZE 20
 #define SMOOTHING_WINDOW 7
 #define FRECHET_THRESHOLD 0.0030
-#define CHARGE_THRESHOLD 0.1
 #define SIGNAL_AMPLIFICATION 100.0
+
+// GRAPHICS CONSTANTS
 #define GRAPH_WIDTH 72
 #define GRAPH_HEIGHT 30
+#define TASKS NUM_CHANNELS
+#define ROW_H 8          // Increased height for polarization swing
+#define ROW_G 2          // Gap between rows
+#define TOP_Y 5
+#define POLARIZATION_GAIN 30.0 // Adjust sensitivity of the wave display
+
+// OSCILLATION CONSTANTS
 #define OSCILLATION_PROBABILITY 0.15
 #define OSCILLATION_MIN_DURATION 50
 #define OSCILLATION_MAX_DURATION 150
 #define OSCILLATION_AMPLITUDE 0.05
 
+// PINS
 const int analogPins[NUM_CHANNELS] = { A0, A1, A2, A3 };
 
+// DATA BUFFERS
 float channelHistory[NUM_CHANNELS][HISTORY_SIZE];
 float smoothedData[NUM_CHANNELS][HISTORY_SIZE];
 float baselineVoltages[NUM_CHANNELS];
 float currentMatrix[MATRIX_SIZE][MATRIX_SIZE];
 float seminormVector[MATRIX_SIZE];
+
+// METRIC BUFFERS
 float distanceMatrix[MATRIX_SIZE][MATRIX_SIZE]; 
 float cauchySequence[MATRIX_SIZE];
 
+// CHART BUFFER (Changed to int8_t for Signed Polarization)
+int8_t gantt[TASKS][GRAPH_WIDTH]; 
+
+// STATE
 bool isOscillating = false;
 int oscillationCounter = 0;
 int oscillationDuration = 0;
@@ -53,52 +72,37 @@ unsigned long lastSampleTime = 0;
 const unsigned long sampleIntervalMs = 2;
 int analysisCount = 0;
 
-#define TASKS NUM_CHANNELS
-#define ROW_H 6
-#define ROW_G 1
-#define TOP_Y 10
-
-uint8_t gantt[TASKS][GRAPH_WIDTH];
 int head = 0;
 unsigned long lastFrame = 0;
 const unsigned long frameMs = 50;
 
-// ============ STRUCT DEFINITION - ONLY ONE COPY ============
-struct LogicState {
-  bool t_sample;
-  bool t_frame;
-  bool p_converge;
-  bool p_active_all3;
-  bool p_optimal;
-  bool p_oscStart;
-  bool p_oscStop;
-};
-
-// Forward declarations
+// FUNCTION PROTOTYPES
 void establishBaseline();
 void sampleAllChannels();
+void updateOscillationState();
+float getOscillationValue(int channel);
 void applySmoothingFilter();
 void updateCurrentMatrix();
-void updateDistanceAndCauchyMetrics();
 float calculateCorrelation(int ch1, int ch2);
+void updateDistanceAndCauchyMetrics();
 float calculateDistanceMetric(int ch1, int ch2);
-float getOscillationValue(int channel);
-void drawGanttChart();
+bool areChannelsOptimal();
 
 void setup() {
   Serial.begin(115200);
+  
   Wire.begin(SDA_PIN, SCL_PIN);
   u8g2.begin();
 
+  // Initialize buffers
   for (int i = 0; i < MATRIX_SIZE; i++) {
     cauchySequence[i] = 0.0;
     seminormVector[i] = 0.0;
-    oscillationFrequencies[i] = 0.0;
-    oscillationPhases[i] = 0.0;
     for (int j = 0; j < MATRIX_SIZE; j++) {
       distanceMatrix[i][j] = 0.0;
     }
   }
+  // Initialize Gantt with 0 (flatline)
   for (int i = 0; i < TASKS; i++) {
     for (int j = 0; j < GRAPH_WIDTH; j++) {
       gantt[i][j] = 0;
@@ -107,96 +111,173 @@ void setup() {
 
   randomSeed(analogRead(A0) + analogRead(A1));
   establishBaseline();
-  Serial.println("Setup complete - Using Translation-Invariant Complete Metric");
+  Serial.println("Setup complete - Polarization Mode");
 }
 
-// ============ EVALLOGIC FUNCTION - ONLY ONE COPY ============
-LogicState evalLogic(unsigned long now) {
-  LogicState s{};
-  s.t_sample = (now - lastSampleTime) >= sampleIntervalMs;
-  s.t_frame  = (now - lastFrame)      >= frameMs;
+/**
+ * @brief Captures the polarity (direction) and magnitude of the signal
+ * instead of just a binary On/Off state.
+ */
+void pushGanttSamples() {
+  for (int ch = 0; ch < TASKS; ch++) {
+    // 1. Get signal relative to baseline
+    float signalDelta = smoothedData[ch][historyIndex] - baselineVoltages[ch];
+    
+    // 2. Apply Gain and clamp to fit the row height (±3 pixels approx)
+    // Positive values go UP, Negative values go DOWN
+    int val = (int)(signalDelta * POLARIZATION_GAIN);
+    
+    // 3. Constrain to fit inside ROW_H/2 (e.g., -4 to +4)
+    int maxDeflection = (ROW_H / 2) - 1;
+    if (val > maxDeflection) val = maxDeflection;
+    if (val < -maxDeflection) val = -maxDeflection;
+    
+    // 4. Store signed integer
+    gantt[ch][head] = (int8_t)val;
+  }
+  head = (head + 1) % GRAPH_WIDTH;
+}
 
-  bool haveHist = (analysisCount >= MATRIX_SIZE);
-  bool anyFar = false;
-  if (haveHist) {
-    for (int i = 1; i < MATRIX_SIZE; i++) {
-      if (fabs(cauchySequence[0] - cauchySequence[i]) > FRECHET_THRESHOLD) {
-        anyFar = true; 
-        break;
+/**
+ * @brief Renders 2D Polarization (Vertical deflection vs Time)
+ */
+void drawGanttChart() {
+  for (int ch = 0; ch < TASKS; ch++) {
+    // Calculate the vertical center of this channel's row
+    int centerY = yOffset + TOP_Y + ch * (ROW_H + ROW_G) + (ROW_H / 2);
+    
+    // Draw the zero-crossing baseline (faintly)
+    // u8g2.drawPixel(xOffset, centerY); // Optional axis dot
+    
+    for (int x = 0; x < GRAPH_WIDTH; x++) {
+      // Circular buffer access
+      int col = (head + x) % GRAPH_WIDTH;
+      int8_t val = gantt[ch][col];
+      
+      int screenX = xOffset + x;
+      
+      if (val == 0) {
+        // Draw flat baseline
+        u8g2.drawPixel(screenX, centerY);
+      } else {
+        // Draw Vertical Vector (Polarization)
+        // if val is positive, we draw UP from center. 
+        // if val is negative, we draw DOWN from center.
+        
+        // Note: In screen coords, Y increases downwards.
+        // So "Up" is (centerY - val)
+        int yTarget = centerY - val;
+        
+        // Draw line from Center to Target
+        u8g2.drawVLine(screenX, min(centerY, yTarget), abs(val) + 1);
       }
     }
   }
-  s.p_converge = haveHist && anyFar;
-
-  bool a0 = seminormVector[0] > 100.0f;
-  bool a1 = seminormVector[1] > 100.0f;
-  bool a2 = seminormVector[2] > 100.0f;
-  s.p_active_all3 = a0 && a1 && a2;
-  s.p_optimal = s.p_converge && s.p_active_all3;
-
-  s.p_oscStart = (!isOscillating) && (random(1000) < (OSCILLATION_PROBABILITY * 1000));
-  s.p_oscStop  = (isOscillating)  && (oscillationCounter >= oscillationDuration);
-
-  return s;
 }
 
 void loop() {
   unsigned long now = millis();
-  LogicState s = evalLogic(now);
 
-  if (s.t_sample) {
+  if (now - lastSampleTime >= sampleIntervalMs) {
     lastSampleTime = now;
-
-    if (s.p_oscStart) {
-      isOscillating = true;
-      oscillationCounter = 0;
-      oscillationDuration = random(OSCILLATION_MIN_DURATION, OSCILLATION_MAX_DURATION);
-      oscillationStartTime = now;
-      for (int i = 0; i < NUM_CHANNELS; i++) {
-        oscillationFrequencies[i] = random(20, 100) / 10.0;
-        oscillationPhases[i]      = random(0, 628) / 100.0;
-      }
-    } else if (s.p_oscStop) {
-      isOscillating = false;
-    } else if (isOscillating) {
-      oscillationCounter++;
-    }
-
+    
+    updateOscillationState();
     sampleAllChannels();
     applySmoothingFilter();
-    updateCurrentMatrix();
-    updateDistanceAndCauchyMetrics();
-
-    if (s.p_optimal) {
-      Serial.println("YES");
-    }
-
-    for (int ch = 0; ch < TASKS; ch++) {
-      bool activeCh = s.p_converge && (seminormVector[ch] > 100.0f);
-      gantt[ch][head] = activeCh ? 1 : 0;
-    }
-    head = (head + 1) % GRAPH_WIDTH;
+    updateCurrentMatrix(); 
+    updateDistanceAndCauchyMetrics(); 
+    
+    // Update the polarization chart data
+    pushGanttSamples();
 
     historyIndex = (historyIndex + 1) % HISTORY_SIZE;
     analysisCount++;
   }
 
-  if (s.t_frame) {
+  if (now - lastFrame >= frameMs) {
     lastFrame = now;
     u8g2.firstPage();
     do {
       u8g2.setFont(u8g2_font_ncenB08_tr);
-      u8g2.setCursor(xOffset, yOffset + 8);
-      u8g2.print("Unity fuse");
+      u8g2.setCursor(xOffset, yOffset - 2);
+      u8g2.print("Polarization"); // Updated Title
+      
+      // Draw a small axis guide on the left
+      u8g2.drawVLine(xOffset - 2, yOffset + TOP_Y, TASKS * (ROW_H + ROW_G));
+      
       drawGanttChart();
     } while (u8g2.nextPage());
   }
 }
 
-// ============ HELPER FUNCTIONS ============
+// --- METRIC FUNCTIONS (Translation Invariant) ---
+
+float calculateDistanceMetric(int ch1, int ch2) {
+  float sumOfSquares = 0.0;
+  int samples = min(HISTORY_SIZE, analysisCount);
+  if (samples == 0) return 0.0;
+
+  for (int i = 0; i < samples; i++) {
+    int idx = (historyIndex - i + HISTORY_SIZE) % HISTORY_SIZE;
+    float diff = smoothedData[ch1][idx] - smoothedData[ch2][idx];
+    sumOfSquares += diff * diff;
+  }
+  return sqrt(sumOfSquares / samples); 
+}
+
+void updateDistanceAndCauchyMetrics() {
+  // Update seminorms
+  for (int i = 0; i < MATRIX_SIZE; i++) {
+    float norm = 0.0;
+    for (int j = 0; j < MATRIX_SIZE; j++) {
+      norm += currentMatrix[i][j] * currentMatrix[i][j];
+    }
+    seminormVector[i] = sqrt(norm);
+  }
+
+  // Update Distance Matrix
+  float frobeniusNormSq = 0.0;
+  for (int i = 0; i < MATRIX_SIZE; i++) {
+    for (int j = i; j < MATRIX_SIZE; j++) {
+      if (i == j) {
+        distanceMatrix[i][j] = 0.0;
+      } else {
+        float dist = calculateDistanceMetric(i, j);
+        distanceMatrix[i][j] = dist;
+        distanceMatrix[j][i] = dist; 
+      }
+      frobeniusNormSq += distanceMatrix[i][j] * distanceMatrix[i][j];
+    }
+  }
+
+  float systemStateMetric = sqrt(frobeniusNormSq);
+
+  for (int i = MATRIX_SIZE - 1; i > 0; i--) {
+    cauchySequence[i] = cauchySequence[i - 1];
+  }
+  cauchySequence[0] = systemStateMetric;
+}
+
+bool areChannelsOptimal() {
+  if (analysisCount < MATRIX_SIZE) return false;
+  bool converging = false;
+  for (int i = 1; i < MATRIX_SIZE; i++) {
+    if (fabs(cauchySequence[0] - cauchySequence[i]) > FRECHET_THRESHOLD) {
+      converging = true;
+      break;
+    }
+  }
+  if (!converging) return false;
+  for (int ch = 0; ch < 3; ch++) {
+    if (seminormVector[ch] <= 100) return false;
+  }
+  return true;
+}
+
+// --- DATA ACQUISITION & UTILS ---
 
 void establishBaseline() {
-  Serial.println("Establishing baseline...");
+  Serial.println("Baseline calibration...");
   const int samples = 50;
   for (int ch = 0; ch < NUM_CHANNELS; ch++) {
     float sum = 0;
@@ -205,10 +286,6 @@ void establishBaseline() {
       delay(10);
     }
     baselineVoltages[ch] = sum / samples;
-    Serial.print("Channel "); 
-    Serial.print(ch); 
-    Serial.print(" baseline: "); 
-    Serial.println(baselineVoltages[ch], 4);
   }
 }
 
@@ -220,17 +297,31 @@ void sampleAllChannels() {
   }
 }
 
+void updateOscillationState() {
+  if (!isOscillating) {
+    if (random(1000) < (OSCILLATION_PROBABILITY * 1000)) {
+      isOscillating = true;
+      oscillationCounter = 0;
+      oscillationDuration = random(OSCILLATION_MIN_DURATION, OSCILLATION_MAX_DURATION);
+      oscillationStartTime = millis();
+      for (int i = 0; i < NUM_CHANNELS; i++) {
+        oscillationFrequencies[i] = random(20, 100) / 10.0;
+        oscillationPhases[i] = random(0, 628) / 100.0;
+      }
+    }
+  } else {
+    oscillationCounter++;
+    if (oscillationCounter >= oscillationDuration) {
+      isOscillating = false;
+    }
+  }
+}
+
 float getOscillationValue(int channel) {
   if (!isOscillating) return 0.0;
   float timeInSeconds = (millis() - oscillationStartTime) / 1000.0;
   float omega = 2.0 * PI * oscillationFrequencies[channel];
-  float fundamental = sin(omega * timeInSeconds + oscillationPhases[channel]);
-  float harmonic = 0.3 * sin(2.0 * omega * timeInSeconds + oscillationPhases[channel] * 0.5);
-  float progress = (float)oscillationCounter / (float)oscillationDuration;
-  float envelope = 1.0;
-  if (progress < 0.1) envelope = progress / 0.1;
-  else if (progress > 0.9) envelope = (1.0 - progress) / 0.1;
-  return (fundamental + harmonic) * OSCILLATION_AMPLITUDE * envelope;
+  return (sin(omega * timeInSeconds + oscillationPhases[channel]) * OSCILLATION_AMPLITUDE);
 }
 
 void applySmoothingFilter() {
@@ -279,65 +370,4 @@ float calculateCorrelation(int ch1, int ch2) {
     return (covariance / (std1 * std2)) * SIGNAL_AMPLIFICATION;
   }
   return 0.0;
-}
-
-float calculateDistanceMetric(int ch1, int ch2) {
-  float sumOfSquares = 0.0;
-  int samples = min(HISTORY_SIZE, analysisCount);
-  if (samples == 0) return 0.0;
-
-  for (int i = 0; i < samples; i++) {
-    int idx = (historyIndex - i + HISTORY_SIZE) % HISTORY_SIZE;
-    float diff = smoothedData[ch1][idx] - smoothedData[ch2][idx];
-    sumOfSquares += diff * diff;
-  }
-  return sqrt(sumOfSquares / samples);
-}
-
-void updateDistanceAndCauchyMetrics() {
-  for (int i = 0; i < MATRIX_SIZE; i++) {
-    float norm = 0.0;
-    for (int j = 0; j < MATRIX_SIZE; j++) {
-      norm += currentMatrix[i][j] * currentMatrix[i][j];
-    }
-    seminormVector[i] = sqrt(norm);
-  }
-
-  float frobeniusNormSq = 0.0;
-  for (int i = 0; i < MATRIX_SIZE; i++) {
-    for (int j = i; j < MATRIX_SIZE; j++) {
-      if (i == j) {
-        distanceMatrix[i][j] = 0.0;
-      } else {
-        float dist = calculateDistanceMetric(i, j);
-        distanceMatrix[i][j] = dist;
-        distanceMatrix[j][i] = dist;
-      }
-      frobeniusNormSq += distanceMatrix[i][j] * distanceMatrix[i][j];
-    }
-  }
-
-  float systemStateMetric = sqrt(frobeniusNormSq);
-
-  for (int i = MATRIX_SIZE - 1; i > 0; i--) {
-    cauchySequence[i] = cauchySequence[i - 1];
-  }
-  cauchySequence[0] = systemStateMetric;
-}
-
-void drawGanttChart() {
-  for (int ch = 0; ch < TASKS; ch++) {
-    int y = yOffset + TOP_Y + ch * (ROW_H + ROW_G);
-    int runStart = -1;
-    for (int x = 0; x < GRAPH_WIDTH; x++) {
-      int col = (head + x) % GRAPH_WIDTH;
-      if (gantt[ch][col] && runStart < 0) runStart = x;
-      if ((!gantt[ch][col] || x == GRAPH_WIDTH - 1) && runStart >= 0) {
-        int runEnd = gantt[ch][col] ? x : x - 1;
-        int w = runEnd - runStart + 1;
-        if (w > 0) u8g2.drawBox(xOffset + runStart, y, w, ROW_H);
-        runStart = -1;
-      }
-    }
-  }
 }
