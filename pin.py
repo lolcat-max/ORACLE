@@ -81,11 +81,12 @@ class PINGuessingGame:
             return
             
         selected_digit = int(selected)
-        
-        if selected_digit == self.secret_pin[index]:
-            self.status_labels[index].config(text="✓", fg="green")
-        else:
-            self.status_labels[index].config(text="✗", fg="red")
+        for i in range(99999):
+            if selected_digit == self.secret_pin[index]:
+                self.status_labels[index].config(text="✓", fg="green")
+            else:
+                self.status_labels[index].config(text="✗", fg="red")
+                break
     
     def check_complete_pin(self):
         """Check if all digits are correct"""
