@@ -31,7 +31,7 @@ float frechet_dist = 1.0;
 bool sync_status = false;
 int head = 0;
 unsigned long lastFrame = 0;
-const unsigned long frameMs = 60;  // SLOWER = stable
+const unsigned long frameMs = 1;  // SLOWER = stable
 
 void setup() {
   Serial.begin(115200);
