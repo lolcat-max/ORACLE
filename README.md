@@ -62,5 +62,5 @@ Auditability: Fréchet convergence is mathematically inspectable and can be repr
 
 This yields deterministic, physics-verified gambling without random numbers.
 
-(the device operates and indicates 'next order' domains)
+
 
