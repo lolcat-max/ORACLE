@@ -1,145 +1,77 @@
 /*
- * Knowing vs Walking - Quantum Automorphism Plotter
- * 
- * Visualizes the fundamental duality:
- * - Blue line: KNOWING (direct distance in Banach space)
- * - Red line: WALKING (actual path length through state space)
- * - Green line: SYMMETRY (how aligned they are)
- * 
- * Open Serial Plotter: Tools > Serial Plotter
- */
+  Fréchet space convergence demo (Arduino Serial Plotter)
 
-const int NUM_SENSORS = 6;
-const int PATH_MEMORY = 30;
+  We model a Fréchet topology using a countable family of seminorms {p_k}.
+  We only plot a few (p1, p2, p3) but compute a Fréchet-style metric from them:
 
-struct QuantumState {
-  float pos[NUM_SENSORS];
-  unsigned long time;
-};
+    d(x,y) = Σ_{k=1..K} 2^{-k} * min(1, p_k(x-y))
 
-QuantumState path[PATH_MEMORY];
-int pathIdx = 0;
+  Sequence (converges to v when v is steady):
+    x_{n+1} = (1-alpha)x_n + alpha v
 
-QuantumState t1_know;    // The knowledge
-QuantumState t2_walk;    // The walking
-bool initialized = false;
+  v is the "target vector" from analogRead(A0), analogRead(A1), normalized to [-1,1].
+
+  Channels:
+    X Y p1err p2err p3err dFrechet
+*/
+
+const unsigned long BAUD = 115200;
+
+const int PIN_X = A0;
+const int PIN_Y = A1;
+
+const float alpha = 0.08f;   // contraction step (0<alpha<1), bigger = faster convergence
+
+// Current iterate x_n in R^2
+float x = 0.0f, y = 0.0f;
+
+static inline float clamp01(float v) { return (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v); }
+static inline float absf(float a) { return (a < 0.0f) ? -a : a; }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(BAUD);
+  delay(200);
+  Serial.println("X Y p1err p2err p3err dFrechet");
 }
 
 void loop() {
-  // Read sensors into quantum state
-  readQuantumState(&t2_walk);
-  
-  // Initialize knowledge point
-  if (!initialized) {
-    t1_know = t2_walk;
-    initialized = true;
-  }
-  
-  // Store path
-  path[pathIdx] = t2_walk;
-  pathIdx = (pathIdx + 1) % PATH_MEMORY;
-  
-  // Compute metrics
-  float knowing = computeKnowing();      // Direct distance t1→t2
-  float walking = computeWalking();      // Path integral
-  float symmetry = knowing / (walking + 0.001);  // Automorphism
-  if (symmetry > 1.0) symmetry = 1.0;
-  
-  // Compute Banach L2 norm
-  float norm = computeBanachNorm(t2_walk);
-  
-  // Plot: Knowing vs Walking vs Symmetry
-  Serial.print("Knowing:");
-  Serial.print(knowing * 2);  // Scale for visibility
-  Serial.print(",Walking:");
-  Serial.print(walking * 2);
-  Serial.print(",Symmetry:");
-  Serial.print(symmetry);
-  Serial.print(",BanachNorm:");
-  Serial.print(norm);
-  
-  // Add quantum phase
-  float phase = computePhase();
-  Serial.print(",Phase:");
-  Serial.print(phase);
-  
-  Serial.println();
-  
-  // Reset knowledge every 5 seconds
-  if (millis() % 5000 < 100) {
-    t1_know = t2_walk;
-  }
-  
-  delay(50);
-}
+  // Read target v from analog and map to [-1, 1] so the origin is meaningful
+  float vx = (analogRead(PIN_X) / 1023.0f) * 2.0f - 1.0f;
+  float vy = (analogRead(PIN_Y) / 1023.0f) * 2.0f - 1.0f;
 
-void readQuantumState(QuantumState* state) {
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    state->pos[i] = (analogRead(A0 + i) - 511.5) / 511.5;
-  }
-  state->time = millis();
-}
+  // Contraction iteration toward v (gives convergence when v is stable)
+  x = (1.0f - alpha) * x + alpha * vx;
+  y = (1.0f - alpha) * y + alpha * vy;
 
-float computeKnowing() {
-  // Knowing: straight-line Banach space distance
-  float dist = 0.0;
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    float diff = t2_walk.pos[i] - t1_know.pos[i];
-    dist += diff * diff;
-  }
-  return sqrt(dist);
-}
+  // Error e = x - v
+  float ex = x - vx;
+  float ey = y - vy;
 
-float computeWalking() {
-  // Walking: actual path length
-  float totalDist = 0.0;
-  
-  for (int i = 1; i < PATH_MEMORY; i++) {
-    int curr = (pathIdx - i + PATH_MEMORY) % PATH_MEMORY;
-    int prev = (pathIdx - i - 1 + PATH_MEMORY) % PATH_MEMORY;
-    
-    if (path[prev].time > 0) {
-      float segDist = 0.0;
-      for (int j = 0; j < NUM_SENSORS; j++) {
-        float diff = path[curr].pos[j] - path[prev].pos[j];
-        segDist += diff * diff;
-      }
-      totalDist += sqrt(segDist);
-    }
-  }
-  
-  return totalDist;
-}
+  // A small family of seminorms p_k(e).
+  // These are all seminorms on R^2 (nonnegative, subadditive, absolutely homogeneous).
+  // p1: L1-type
+  float p1 = absf(ex) + absf(ey);
 
-float computeBanachNorm(QuantumState state) {
-  // L2 norm in Banach space
-  float sum = 0.0;
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    sum += state.pos[i] * state.pos[i];
-  }
-  return sqrt(sum);
-}
+  // p2: weighted L1 (different weights => different seminorm)
+  float p2 = absf(ex) + 2.0f * absf(ey);
 
-float computePhase() {
-  // Berry phase - geometric memory of path
-  static float phase = 0.0;
-  
-  int prev = (pathIdx - 1 + PATH_MEMORY) % PATH_MEMORY;
-  
-  if (path[prev].time > 0) {
-    float connection = 0.0;
-    for (int i = 0; i < NUM_SENSORS; i++) {
-      float dPos = t2_walk.pos[i] - path[prev].pos[i];
-      connection += t2_walk.pos[i] * dPos;
-    }
-    phase += connection;
-    
-    while (phase > PI) phase -= 2*PI;
-    while (phase < -PI) phase += 2*PI;
-  }
-  
-  return phase;
+  // p3: max-type (L_infty)
+  float p3 = (absf(ex) > absf(ey)) ? absf(ex) : absf(ey);
+
+  // Fréchet-style metric using K=3 seminorms (finite truncation for Arduino)
+  // d = sum_{k=1..3} 2^{-k} * min(1, p_k)
+  float d = 0.0f;
+  d += 0.5f  * clamp01(p1);  // 2^-1
+  d += 0.25f * clamp01(p2);  // 2^-2
+  d += 0.125f* clamp01(p3);  // 2^-3
+
+  // Print channels (space-separated)
+  Serial.print(x, 5);   Serial.print(' ');
+  Serial.print(y, 5);   Serial.print(' ');
+  Serial.print(p1, 5);  Serial.print(' ');
+  Serial.print(p2, 5);  Serial.print(' ');
+  Serial.print(p3, 5);  Serial.print(' ');
+  Serial.println(d, 6);
+
+  delay(25);
 }
