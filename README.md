@@ -7,4 +7,4 @@ The code implements an Advanced Analysis Oscilloscope for the Arduino UNO microc
 The diode provides a permitted quantum transition path that allows the coil’s stored field energy to dissipate without forcing electrons into destructive high-energy tunneling events elsewhere.
 
 
-Probability of boolean selection approaches 0 per pairwise selection inconsistency (mitigate logical conflict)
+No logical topology, results are absolute to pairwise signal and cannot be inferred logically.
