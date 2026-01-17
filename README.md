@@ -1,1 +1,1 @@
-This program is a signal-to-math oracle, turning real analog phenomena into rule-based deterministic outcomes. It provides a non-interactive, non-random verification oracle rather than chance-driven randomness.
+This ESP32C3-OLED-72x40 program is a signal-to-math oracle, turning real analog phenomena into rule-based deterministic outcomes. It provides a non-interactive, non-random verification oracle rather than chance-driven randomness.
